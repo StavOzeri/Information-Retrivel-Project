@@ -34,29 +34,6 @@ def download_file(bucket_name, source_blob_name, destination_file_name):
     except Exception as e:
         print(f"Failed to download {source_blob_name}: {e}")
 
-def check_and_download():
-    if not os.path.exists('postings_gcp'):
-        os.makedirs('postings_gcp')
-        
-    files = [
-        ('postings_gcp/index_body.pkl', 'index_body.pkl'), 
-        ('index_title.pkl', 'index_title.pkl'), 
-        ('index_norms.pkl', 'index_norms.pkl'),
-        ('postings_gcp/id_to_title.pkl', 'id_to_title.pkl'),
-        ('pageviews-202108-user.pkl', 'pageviews-202108-user.pkl')
-    ]
-    
-    print("Checking required files")
-    for src, dst in files:
-        if not os.path.exists(dst) or os.path.getsize(dst) == 0:
-            print(f"Downloading {dst} form {src}...")
-            download_file(BUCKET_NAME, src, dst)
-        else:
-             print(f"File {dst} already exists.")
-
-    print("Download Check Complete")
-
-check_and_download()
 
 # LOAD INDICES
 
@@ -65,20 +42,26 @@ DATA_DIR = "."
 def load_pickle(filename):
     path = os.path.join(DATA_DIR, filename)
     if not os.path.exists(path):
-        print(f"Error: {filename} missing.")
+        print(f"Error: {filename} missing at {path}")
         return None
     with open(path, 'rb') as f:
         return pickle.load(f)
 
-print("Loading indices into memory...")
-idx_body = load_pickle('index_body.pkl')
+
+print("Loading indices into memory")
+idx_body = load_pickle('postings_gcp/index_body.pkl') 
 idx_title = load_pickle('index_title.pkl')
 idx_norms = load_pickle('index_norms.pkl')
-id_to_title = load_pickle('id_to_title.pkl')
+id_to_title = load_pickle('postings_gcp/id_to_title.pkl') 
 page_views = load_pickle('pageviews-202108-user.pkl')
-print("Indices loaded successfully.")
 
 
+if all([idx_body, idx_title, idx_norms, id_to_title, page_views]):
+    print("Indices loaded successfully.")
+else:
+    print("WARNING: Some indices failed to load. Check file paths.")
+
+    
 # HELPER FUNCTIONS
 
 english_stopwords = frozenset(stopwords.words('english'))
@@ -97,10 +80,7 @@ def get_top_n_results(sim_dict, N=100):
     sorted_results = sorted(sim_dict.items(), key=lambda item: item[1], reverse=True)[:N]
     final_res = []
     for doc_id, score in sorted_results:
-        if id_to_title:
-            title = id_to_title.get(doc_id, "Unknown Title")
-        else:
-            title = "Unknown Title"
+        title = id_to_title.get(doc_id) or id_to_title.get(int(doc_id)) or id_to_title.get(str(doc_id)) or "Unknown Title"
         final_res.append((str(doc_id), title))
     return final_res
 
@@ -148,13 +128,17 @@ def search():
     if idx_body and idx_norms:
         for term in set(tokens):
             try:
-                posting_list = idx_body.read_a_posting_list(".", term, BUCKET_NAME)
-                for doc_id, tf in posting_list:
-                    if doc_id in idx_norms:
-                        norm = idx_norms[doc_id]
-                        if norm > 0:
+                locs = idx_body.posting_locs.get(term)
+                if locs:
+                    posting_list = idx_body.read(locs, 1000) 
+                    for doc_id, tf in posting_list:
+                        norm = idx_norms.get(doc_id)
+                        if norm is None:
+                             norm = idx_norms.get(int(doc_id)) if isinstance(doc_id, str) else idx_norms.get(str(doc_id))
+                        if norm and norm > 0:
                             combined_scores[doc_id] += (tf / norm) * w_body
-            except:
+            except Exception as e:
+                print(f"Error reading posting list for {term}: {e}") 
                 continue
 
     # PageViews Boost
@@ -165,6 +149,7 @@ def search():
                 combined_scores[doc_id] += math.log(views, 10) * w_views
 
     res = get_top_n_results(combined_scores, 100)
+    print(f"Query: {query}, Tokens: {tokens}, Scores found: {len(combined_scores)}")
 
     # END SOLUTION
     return jsonify(res)
@@ -197,13 +182,17 @@ def search_body():
     if idx_body and idx_norms:
         for term in set(tokens):
             try:
-                posting_list = idx_body.read_a_posting_list(".", term, BUCKET_NAME)
-                for doc_id, tf in posting_list:
-                    if doc_id in idx_norms:
-                        norm = idx_norms[doc_id]
-                        if norm > 0:
-                            scores[doc_id] += (tf / norm)
-            except:
+                locs = idx_body.posting_locs.get(term)
+                if locs:
+                    posting_list = idx_body.read(locs, 1000) 
+                    for doc_id, tf in posting_list:
+                        d_id = int(doc_id)
+                        if d_id in idx_norms:
+                            norm = idx_norms[d_id]
+                            if norm > 0:
+                                scores[d_id] += (tf / norm)
+            except Exception as e:
+                print(f"Error processing term {term}: {e}")
                 continue
 
     res = get_top_n_results(scores, 100)
@@ -345,4 +334,4 @@ def run(**options):
 
 if __name__ == '__main__':
     # run the Flask RESTful API, make the server publicly available (host='0.0.0.0') on port 8080
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)
