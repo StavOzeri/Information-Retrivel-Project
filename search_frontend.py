@@ -114,7 +114,7 @@ def search():
     
     # Weights
     w_title = 0.6    
-    w_body = 0.4     
+    w_body = 0.3     
     w_views = 0.1    
     
     # Title Score
