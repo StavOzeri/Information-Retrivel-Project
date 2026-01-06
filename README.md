@@ -35,7 +35,7 @@ The engine processes queries through a multi-stage pipeline:
 * **Tokenization**: The query is tokenized using a Regex tokenizer, filtering out English stopwords and corpus-specific stopwords.
 * **Scoring Components**:
     * **Title Score** ($W_{title} = 0.6$): Keyword matching in article titles.
-    * **Body Score** ($W_{body} = 0.4$): Cosine Similarity calculated using TF-IDF statistics from the body index.
+    * **Body Score** ($W_{body} = 0.3$): Cosine Similarity calculated using TF-IDF statistics from the body index.
     * **PageViews Boost** ($W_{views} = 0.1$): A logarithmic boost is added to favor popular articles.
 * **Ranking**: Results are aggregated, sorted by descending score, and the top 100 are returned.
 
