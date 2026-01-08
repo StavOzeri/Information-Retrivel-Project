@@ -23,6 +23,7 @@ app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False
 
 
 BUCKET_NAME = 'final_project_ir_stav_hen_bucket'
+N_DOCS = 6348910
 
 def download_file(bucket_name, source_blob_name, destination_file_name):
     try:
@@ -110,46 +111,61 @@ def search():
     # BEGIN SOLUTION
     
     tokens = tokenize(query)
+    if not tokens:
+        return jsonify(res)
+        
+    query_counts = Counter(tokens)
     combined_scores = Counter()
+    unique_terms_tracker = defaultdict(set)
     
     # Weights
     w_title = 0.6    
     w_body = 0.3     
     w_views = 0.1    
     
-    # Title Score
+    # 1. Title Score
     if idx_title:
         for term in tokens:
             if term in idx_title:
                 for doc_id, tf in idx_title[term]:
-                    combined_scores[doc_id] += w_title
+                    combined_scores[doc_id] += (tf * w_title)
+                    unique_terms_tracker[doc_id].add(term)
 
-    # Body Score (Cosine Similarity)
+    # 2. Body Score (TF-IDF Cosine Similarity)
     if idx_body and idx_norms:
-        for term in set(tokens):
+        for term, q_tf in query_counts.items():
             try:
+                df = idx_body.df.get(term)
+                if not df: continue
+                
+                idf = math.log(N_DOCS / df, 10)
                 locs = idx_body.posting_locs.get(term)
+                
                 if locs:
                     posting_list = idx_body.read(locs, 1000) 
                     for doc_id, tf in posting_list:
-                        norm = idx_norms.get(doc_id)
-                        if norm is None:
-                             norm = idx_norms.get(int(doc_id)) if isinstance(doc_id, str) else idx_norms.get(str(doc_id))
+                        norm = idx_norms.get(doc_id) or idx_norms.get(int(doc_id))
                         if norm and norm > 0:
-                            combined_scores[doc_id] += (tf / norm) * w_body
-            except Exception as e:
-                print(f"Error reading posting list for {term}: {e}") 
+                            tfidf_score = (tf * idf) * (q_tf * idf) / norm
+                            combined_scores[doc_id] += tfidf_score * w_body
+                            unique_terms_tracker[doc_id].add(term)
+            except:
                 continue
 
-    # PageViews Boost
+    # 3. Pseudo-Proximity Boost
+    for doc_id, terms_found in unique_terms_tracker.items():
+        num_unique = len(terms_found)
+        if num_unique > 1:
+            combined_scores[doc_id] *= (1 + 0.1 * (num_unique - 1))
+
+    # 4. PageViews Boost
     if page_views:
         for doc_id in combined_scores.keys():
-            views = page_views.get(doc_id, 0)
+            views = page_views.get(doc_id) or page_views.get(int(doc_id), 0)
             if views > 0:
                 combined_scores[doc_id] += math.log(views, 10) * w_views
 
     res = get_top_n_results(combined_scores, 100)
-    print(f"Query: {query}, Tokens: {tokens}, Scores found: {len(combined_scores)}")
 
     # END SOLUTION
     return jsonify(res)
@@ -177,23 +193,22 @@ def search_body():
     # BEGIN SOLUTION
 
     tokens = tokenize(query)
+    query_counts = Counter(tokens)
     scores = Counter()
 
     if idx_body and idx_norms:
-        for term in set(tokens):
-            try:
-                locs = idx_body.posting_locs.get(term)
-                if locs:
-                    posting_list = idx_body.read(locs, 1000) 
-                    for doc_id, tf in posting_list:
-                        d_id = int(doc_id)
-                        if d_id in idx_norms:
-                            norm = idx_norms[d_id]
-                            if norm > 0:
-                                scores[d_id] += (tf / norm)
-            except Exception as e:
-                print(f"Error processing term {term}: {e}")
-                continue
+        for term, q_tf in query_counts.items():
+            df = idx_body.df.get(term)
+            if not df: continue
+            
+            idf = math.log(N_DOCS / df, 10)
+            locs = idx_body.posting_locs.get(term)
+            if locs:
+                posting_list = idx_body.read(locs, 1000) 
+                for doc_id, tf in posting_list:
+                    norm = idx_norms.get(int(doc_id))
+                    if norm and norm > 0:
+                        scores[int(doc_id)] += (tf * idf * q_tf * idf) / norm
 
     res = get_top_n_results(scores, 100)
 
