@@ -30,21 +30,22 @@ Upon execution, the system performs a self-check (check_and_download function):
 * **page_views**: Dictionary of page view counts.
 
 ### 2. The Search Algorithm
-The engine processes queries through a multi-stage pipeline:
+The engine processes queries through an optimized multi-stage retrieval pipeline designed for high precision and efficiency:
 
-* **Tokenization**: The query is tokenized using a Regex tokenizer, filtering out English stopwords and corpus-specific stopwords.
-* **Scoring Components**:
-    * **Title Score** ($W_{title} = 0.6$): Keyword matching in article titles.
-    * **Body Score** ($W_{body} = 0.3$): Cosine Similarity calculated using TF-IDF statistics from the body index.
-    * **PageViews Boost** ($W_{views} = 0.1$): A logarithmic boost is added to favor popular articles.
-* **Ranking**: Results are aggregated, sorted by descending score, and the top 100 are returned.
+* **Tokenization**: Queries are processed using a Regex tokenizer that filters out standard English stopwords alongside a customized list of corpus-specific "noise" words (e.g., "category", "references", "external") to focus on core content.
+* **Scoring Components**: The final ranking is an aggregate of multiple relevance signals:
+    * **Title Score** (Weight = 0.6): Matches query terms within article titles, weighted by term frequency (TF) to prioritize exact and descriptive title matches.
+    * **Body Score** (Weight = 0.3): Implements a Vector Space Model approach. It calculates Cosine Similarity using a full TF-IDF implementation. Scores are normalized by pre-computed Euclidean norms (idx_norms) to ensure fairness across documents of varying lengths.
+    * **PageViews Boost** (Weight = 0.1): Incorporates a logarithmic PageViews boost to act as a "tie-breaker," favoring high-quality, popular articles when textual relevance is comparable.
+* **Pseudo-Proximity Boost**: To reward the accumulation of evidence across multiple query terms, the engine applies a bonus (10% per additional unique term) for documents that contain a higher variety of terms from the user's query.
+* **Heuristics for Efficiency**: To maintain low latency (under the 35-second requirement), the engine employs a Champion List heuristic, processing only the top 1,000 posting entries for each query term.
 
 ### Implemented Functions
 
-* **`search()`**: The main retrieval function. It accepts a query, tokenizes it, and calculates a weighted score based on Title matches (0.6), Body Cosine Similarity (0.4), and PageView boosts (0.1) to return the top 100 results.
+* **`search()`**: The primary retrieval function. It integrates Title matches, Body TF-IDF Cosine Similarity, and PageView boosts into a weighted final score, returning the top 100 most relevant results.
 
-* **`search_body()`**: Performs a search based exclusively on the TF-IDF Cosine Similarity of the query against the article body text.
+* **`search_body()`**: A focused retrieval method that ranks results based exclusively on the TF-IDF Cosine Similarity between the query and the article's body text.
 
-* **`search_title()`**: Performs a search based solely on binary keyword matches found within the article titles.
+* **`search_title()`**: A binary retrieval function that ranks documents based on the count of distinct query words appearing in their titles.
 
-* **`get_pageview()`**: A helper function that receives a list of document IDs and returns their respective page view counts.
+* **`get_pageview()`**: A utility function that accepts a list of document IDs and returns their respective PageView counts.
